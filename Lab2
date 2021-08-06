@@ -1,0 +1,171 @@
+; Archivo lab2.s
+; Dispositivo PIC16F887
+; Autor Luis J. Archila
+; pic-as v2.32 
+    
+; programa laboratorio 2
+; creado 3/8/2021
+    
+					
+    
+ PROCESSOR 16F887
+ #include <xc.inc>
+ 
+ ;configuration word 1
+ CONFIG FOSC=INTRC_NOCLKOUT
+ CONFIG WDTE=OFF    
+ CONFIG PWRTE=ON    
+ CONFIG MCLRE=OFF   
+ CONFIG CP=OFF	    
+ CONFIG CPD=OFF	    
+				; configuración del PIC
+ CONFIG BOREN=OFF   
+ CONFIG IESO=OFF    
+ CONFIG FCMEN=OFF   
+ CONFIG LVP=ON	    
+ 
+ ;configuration word 2
+ CONFIG WRT=OFF	    
+ CONFIG BOR4V=BOR40V
+ 
+ PSECT udata_bank0 ; common memory
+    cont:	DS  2
+    
+ ;----Vector Reset----
+ PSECT resVect, class=CODE, abs, delta=2
+ ORG 00h	;posición 0000h para el reset
+ resetVec:
+     PAGESEL main
+     goto main
+     
+ PSECT code, delta=2, abs
+ ORG 100h	; posición para el código
+ 
+ ;configuración
+ main:
+    call    config_io
+    call    config_reloj
+    banksel PORTA
+ ;----loop principal----
+ loop:
+    btfsc   PORTB, 0	;boton inc a
+    call    inc_porta
+    btfsc   PORTB, 1	; boton dec a
+    call    dec_porta
+    btfsc   PORTB, 2	;boton inc c
+    call    inc_portc
+    btfsc   PORTB, 3	; boton dec c
+    call    dec_portc
+    btfsc   PORTB, 7	;boton de suma
+    call    sum_ac			
+    goto    loop		   
+    
+ ;----sub rutinas----
+ ;incremetar puerto a
+ inc_porta:
+    call    delay_small
+    btfsc   PORTB, 0
+    goto    $-1
+    incf    PORTA
+    btfsc   PORTA, 4	;revisar si se exdece de 4 bits
+    bcf	    PORTA, 4	;limpiar el pin si eso pasa
+    return
+ ;decremetar puerto a
+ dec_porta:
+    call    delay_small
+    btfsc   PORTB, 1
+    goto    $-1
+    decf    PORTA
+    btfsc   PORTA, 4	;revisar si se exdece de 4 bits
+    bcf	    PORTA, 4	;limpiar el puerto si eso pasa
+    bcf	    PORTA, 5
+    bcf	    PORTA, 6
+    bcf	    PORTA, 7
+    return
+;incremetar puerto c    
+inc_portc:
+    call    delay_small
+    btfsc   PORTB, 2
+    goto    $-1
+    incf    PORTC
+    btfsc   PORTC, 4	;revisar si se exdece de 4 bits
+    bcf	    PORTC, 4	;limpiar el pin si eso pasa
+    return
+;decremetar puerto c
+ dec_portc:
+    call    delay_small
+    btfsc   PORTB, 3
+    goto    $-1
+    decf    PORTC
+    btfsc   PORTC, 4	;revisar si se exdece de 4 bits
+    bcf	    PORTC, 4	;limpiar el puerto si eso pasa
+    bcf	    PORTC, 5
+    bcf	    PORTC, 6
+    bcf	    PORTC, 7
+    return
+    
+;suma puerto A y C en puerto D
+sum_ac:
+   call	    delay_small
+   btfsc    PORTB, 7
+   goto	    $-1
+   clrw		    ;limpiar W en caso tuviera algún valor
+   movwf    PORTA   ;mover el valor del puerto A a W
+   addlw    PORTC   ;sumar el valor del puerto C a W (donde está A)
+   addwf    PORTD, 0	;sumar w + f y almacenar en f
+   return
+   
+   ;esta fue la idea principal de la suma, aunque no logré hacer que funcione
+    
+ config_io:
+    bsf	    STATUS, 5	; banco 11
+    bsf	    STATUS, 6
+    clrf    ANSEL	; pines digitales
+    clrf    ANSELH
+    
+    bsf	    STATUS, 5	; banco 01
+    bcf	    STATUS, 6
+    clrf    TRISA	; port A como salida
+    clrf    TRISC	;port C como salida
+    clrf    TRISD	;port D como salida	
+    bsf	    TRISB, 0
+    bsf	    TRISB, 1
+    bsf	    TRISB, 2
+    bsf	    TRISB, 3
+    
+    bcf	    STATUS, 5	; banco 00
+    bcf	    STATUS, 6
+    clrf    PORTA	;eliminar cualquier valor inicial de los puertos de salida
+    clrf    PORTC
+    clrf    PORTD
+    return
+ 
+; ----oscilador a 1MHz----
+config_reloj:
+    banksel OSCCON
+    bsf	    IRCF2	    ; OSCCON, 6 como 1
+    bcf	    IRCF1	    ; OSCCON, 5 como 0
+    bcf	    IRCF0	    ; OSCCON, 4 como 0
+    bsf	    SCS		    ; reloj interno
+    return
+    
+ /*   
+ delay_big:
+    movlw   50		    ; valor inicial del contador
+    movwf   cont+1
+    call    delay_small	    ; rutina de delay
+    decfsz  cont+1, 1	    ; decrementar el contador
+    goto    $-2		    ; ejecutar dos líneas atrás
+    return
+ */
+ 
+ ; esta parte está comentada ya que el delay_big no se utiliza
+ 
+ delay_small:
+    movlw   150		    ; valor inicial del contador
+    movwf   cont
+    decfsz  cont, 1    ; decrementar el contador
+    goto    $-1		    ; ejecutar línea anterior
+    return
+    
+ END
