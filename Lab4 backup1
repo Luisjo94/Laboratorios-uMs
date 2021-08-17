@@ -1,0 +1,225 @@
+;****BACKUP DEL PRELAB****
+
+
+
+; Archivo	lab4.s
+; Dispositivo	PIC16F887
+; Autor		Luis J. Archila
+; Compilador	pic-as v2.32
+; Creado el	16/08/2021
+    
+PROCESSOR   16F887
+#include <xc.inc>
+
+; CONFIG1
+  CONFIG  FOSC = INTRC_NOCLKOUT ; Oscillator Selection bits (INTOSCIO oscillator: I/O function on RA6/OSC2/CLKOUT pin, I/O function on RA7/OSC1/CLKIN)
+  CONFIG  WDTE = OFF             ; Watchdog Timer Enable bit (WDT disabled)
+  CONFIG  PWRTE = OFF           ; Power-up Timer Enable bit (PWRT disabled)
+  CONFIG  MCLRE = OFF           ; RE3/MCLR pin function select bit (RE3/MCLR pin function is digital input, MCLR internally tied to VDD)
+  CONFIG  CP = OFF              ; Code Protection bit (Program memory code protection is disabled)
+  CONFIG  CPD = OFF             ; Data Code Protection bit (Data memory code protection is disabled)
+  CONFIG  BOREN = OFF           ; Brown Out Reset Selection bits (BOR disabled)
+  CONFIG  IESO = OFF            ; Internal External Switchover bit (Internal/External Switchover mode is disabled)
+  CONFIG  FCMEN = OFF           ; Fail-Safe Clock Monitor Enabled bit (Fail-Safe Clock Monitor is disabled)
+  CONFIG  LVP = ON              ; Low Voltage Programming Enable bit (RB3/PGM pin has PGM function, low voltage programming enabled)
+
+; CONFIG2
+  CONFIG  BOR4V = BOR40V        ; Brown-out Reset Selection bit (Brown-out Reset set to 4.0V)
+  CONFIG  WRT = OFF             ; Flash Program Memory Self Write Enable bits (Write protection off)
+  
+;utilizar bit 0 y 1 para los push
+UP	EQU 0
+DOWN	EQU 1
+ 
+tmr0_restart	macro
+    banksel PORTA
+    movlw   61
+    movwf   tmr0
+    bcf	    TOIF
+    endm  
+    
+PSECT udata_bank0
+    cont:   DS 2
+    
+PSECT udata_shr
+    W_TEMP:	    DS 1
+    STATUS_TEMP:    DS 1
+    
+PSECT resVect, class = code, abs, delta=2
+ORG 00h
+resetVec:
+    PAGESEL main
+    goto    main
+    
+PSECT	intVect, class=CODE, abs, delta=2
+ORG 04h
+push:
+    movwf   W_TEMP
+    swapf   STATUS, W
+    movwf   STATUS_TEMP
+    
+isr:
+    ;btfsc   T0IF
+    ;call    int_t0
+    btfsc   RBIF
+    call    int_iocb
+    
+    
+pop:
+    swapf   STATUS_TEMP, W
+    movwf   STATUS 
+    swapf   W_TEMP, F
+    retfie
+    
+;----subrutinas de interrupción----
+ /*   
+int_t0:
+    tmr0_restart
+    incf    cont
+    movf    cont, w
+    sublw   20
+    btfss   ZERO
+    goto    return_t0
+    clrf    cont
+    incf    PORTA
+    
+return_t0:
+    return
+ */
+ 
+int_iocb:
+    banksel PORTA
+    call    delay
+    btfss   PORTB, UP
+    call    inc_4bit
+    call    delay
+    btfss   PORTB, DOWN
+    call    dec_4bit
+    bcf	    RBIF
+    return
+    
+inc_4bit:
+    incf    PORTA
+    btfsc   PORTA, 4
+    bcf	    PORTA, 4
+    return
+    
+dec_4bit:
+    decf    PORTA
+    btfsc   PORTA, 4
+    bcf	    PORTA, 4
+    bcf	    PORTA, 5
+    bcf	    PORTA, 6
+    bcf	    PORTA, 7
+    return
+ 
+PSECT code, delta=2, abs
+ORG 100h
+ 
+ tabla:
+    clrf    PCLATH
+    bsf	    PCLATH, 0	; PCLATH = 01
+    andlw   0x0f
+    addwf   PCL		; PCLATH + PCL + W
+    retlw   00111111B ;0
+    retlw   00000110B ;1
+    retlw   01011011B ;2
+    retlw   01001111B ;3
+    retlw   01100110B ;4
+    retlw   01101101B ;5
+    retlw   01111101B ;6
+    retlw   00000111B ;7
+    retlw   01111111B ;8
+    retlw   01101111B ;9
+    retlw   01110111B ;A
+    retlw   01111100B ;B
+    retlw   00111001B ;C
+    retlw   01011110B ;D
+    retlw   01111001B ;E
+    retlw   01110001B ;F
+ 
+;----config----
+ 
+main:
+    call    config_io
+    call    clock_conf
+    ;call    tmr0_conf
+    call    config_ioc
+    call    config_int_enable
+    banksel PORTA
+    
+;----main loop----
+    
+loop:
+    goto    loop
+    
+;----subrutinas----
+    
+config_ioc:
+    banksel TRISA
+    bsf	    IOCB, UP
+    bsf	    IOCB, DOWN
+    
+    banksel PORTA
+    movf    PORTB, W	;al leer termina el mismatch
+    bcf	    RBIF   
+    return
+    
+config_io:
+    banksel ANSEL
+    clrf    ANSEL
+    clrf    ANSELH
+    
+    banksel TRISA
+    clrf    TRISA	;salidas
+    clrf    TRISC
+    clrf    TRISD
+    bsf	    TRISB, UP	;entradas
+    bsf	    TRISB, DOWN
+    
+    ;habilitar pull-ups
+    bcf	    OPTION_REG, 7
+    bsf	    WPUB, UP
+    bsf	    WPUB, DOWN
+    
+    banksel PORTA
+    clrf    PORTA
+    clrf    PORTC
+    clrf    PORTD
+    return
+    
+clock_conf:
+    banksel OSCCON
+    ;4 MHz
+    bsf	    IRCF2
+    bsf	    IRCF1
+    bsf	    IRCF0
+    bsf	    SCS
+    return
+/* 
+tmr0_conf:
+    banksel TRISA
+    bcf	    T0CS
+    bcf	    PSA
+    bsf	    PS2
+    bsf	    PS1
+    bsf	    PS0
+    tmr0_restart
+    return    
+*/
+config_int_enable:
+    bsf	    GIE
+    ;bsf	    T0IE
+    ;bcf	    T0IF
+    bsf	    RBIE
+    bcf	    RBIF
+    return
+    
+delay:
+    movlw   150		    ; valor inicial del contador
+    movwf   cont
+    decfsz  cont, 1    ; decrementar el contador
+    goto    $-1		    ; ejecutar línea anterior
+    return
+    
+END
