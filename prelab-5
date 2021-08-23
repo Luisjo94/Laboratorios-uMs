@@ -1,0 +1,153 @@
+; Archivo Lab5.s
+; Dispositivo PIC16F887
+; Autor Luis J. Archila
+; pic-as v2.32
+    
+PROCESSOR 16F887
+ #include <xc.inc>
+ 
+ ;configuration word 1
+ CONFIG FOSC=INTRC_NOCLKOUT
+ CONFIG WDTE=OFF    
+ CONFIG PWRTE=OFF    
+ CONFIG MCLRE=OFF   
+ CONFIG CP=OFF	    
+ CONFIG CPD=OFF	    
+				; configuración del PIC
+ CONFIG BOREN=OFF   
+ CONFIG IESO=OFF    
+ CONFIG FCMEN=OFF   
+ CONFIG LVP=OFF	    
+ 
+ ;configuration word 2
+ CONFIG WRT=OFF	    
+ CONFIG BOR4V=BOR40V
+ 
+;----macros----
+ restart_t0	macro
+    banksel PORTA
+    movlw   244
+    movwf   TMR0
+    bcf	    T0IF
+    endm
+ 
+ 
+ PSECT udata_bank0 ; common memory
+    cont:	DS  2
+    conta:	DS  2
+    
+ ;----Vector Reset----
+ PSECT resVect, class=CODE, abs, delta=2
+ ORG 00h	;posición 0000h para el reset
+ resetVec:
+     PAGESEL main
+     goto main
+     
+ PSECT code, delta=2, abs
+ ORG 100h	; posición para el código
+ 
+ tabla:
+    clrf    PCLATH
+    bsf	    PCLATH, 0	; PCLATH = 01
+    andlw   0x0f
+    addwf   PCL		; PCLATH + PCL + W
+    retlw   00111111B ;0
+    retlw   00000110B ;1
+    retlw   01011011B ;2
+    retlw   01001111B ;3
+    retlw   01100110B ;4
+    retlw   01101101B ;5
+    retlw   01111101B ;6
+    retlw   00000111B ;7
+    retlw   01111111B ;8
+    retlw   01101111B ;9
+    /*
+    retlw   01110111B ;A
+    retlw   01111100B ;B
+    retlw   00111001B ;C
+    retlw   01011110B ;D
+    retlw   01111001B ;E
+    retlw   01110001B ;F
+       */
+
+
+;----configuración----
+ main:
+    call    config_io
+    call    config_reloj
+    call    tmr0_conf
+    banksel PORTA
+    
+;----loop principal----
+ loop:
+    btfsc   PORTB, 0
+    call    inc_cont
+    btfsc   PORTB, 1
+    call    dec_cont
+    movf    conta, w
+    call    tabla
+    movwf   PORTC
+    goto    loop
+      
+;----sub rutinas----
+ config_io:
+    banksel ANSEL
+    clrf    ANSEL	; pines digitales
+    clrf    ANSELH
+    
+    banksel TRISA
+    clrf    TRISA	; port A como salida
+    clrf    TRISC	;port C como salida
+    clrf    TRISD	;port D como salida
+    bsf	    TRISB, 0	;pines 0 y 1 PORTB como input
+    bsf	    TRISB, 1
+    
+    banksel PORTA
+    clrf    PORTA	;eliminar cualquier valor inicial de los puertos de salida
+    clrf    PORTC
+    clrf    PORTD
+    return
+ 
+; ----oscilador a 250KHz----
+config_reloj:
+    banksel OSCCON
+    bcf	    IRCF2	    ; 0
+    bsf	    IRCF1	    ; 1
+    bcf	    IRCF0	    ; 0
+    bsf	    SCS		    ; reloj interno
+    return
+    
+tmr0_conf:
+    banksel TRISA
+    bcf	    T0CS    ;reloj interno
+    bcf	    PSA	    ;prescaler para tmr0
+    bsf	    PS2
+    bsf	    PS1
+    bsf	    PS0	    ;prescaler 1:256
+    restart_t0
+    return
+    
+inc_cont:
+    ;call    delay
+    btfsc   PORTB, 0
+    goto    $-1
+    incf    conta
+    return
+    
+dec_cont:
+    ;call    delay
+    btfsc   PORTB, 1
+    goto    $-1
+    decf    conta
+    return
+    
+/*     
+ delay:
+    movlw   10		    ; valor inicial del contador
+    movwf   cont
+    decfsz  cont, 1    ; decrementar el contador
+    goto    $-1		    ; ejecutar línea anterior
+    return
+*/
+    
+ END
