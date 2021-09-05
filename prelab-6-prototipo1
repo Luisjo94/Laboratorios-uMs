@@ -1,0 +1,222 @@
+; Archivo	lab6.s
+; Dispositivo	PIC16F887
+; Autor		Luis J. Archila
+; Compilador	pic-as v2.32
+; Creado el	30/08/2021
+    
+PROCESSOR   16F887
+#include <xc.inc>
+
+; CONFIG1
+  CONFIG  FOSC = INTRC_NOCLKOUT ; Oscillator Selection bits (INTOSCIO oscillator: I/O function on RA6/OSC2/CLKOUT pin, I/O function on RA7/OSC1/CLKIN)
+  CONFIG  WDTE = OFF             ; Watchdog Timer Enable bit (WDT disabled)
+  CONFIG  PWRTE = OFF           ; Power-up Timer Enable bit (PWRT disabled)
+  CONFIG  MCLRE = OFF           ; RE3/MCLR pin function select bit (RE3/MCLR pin function is digital input, MCLR internally tied to VDD)
+  CONFIG  CP = OFF              ; Code Protection bit (Program memory code protection is disabled)
+  CONFIG  CPD = OFF             ; Data Code Protection bit (Data memory code protection is disabled)
+  CONFIG  BOREN = OFF           ; Brown Out Reset Selection bits (BOR disabled)
+  CONFIG  IESO = OFF            ; Internal External Switchover bit (Internal/External Switchover mode is disabled)
+  CONFIG  FCMEN = OFF           ; Fail-Safe Clock Monitor Enabled bit (Fail-Safe Clock Monitor is disabled)
+  CONFIG  LVP = OFF              ; Low Voltage Programming Enable bit (RB3/PGM pin has PGM function, low voltage programming enabled)
+
+; CONFIG2
+  CONFIG  BOR4V = BOR40V        ; Brown-out Reset Selection bit (Brown-out Reset set to 4.0V)
+  CONFIG  WRT = OFF             ; Flash Program Memory Self Write Enable bits (Write protection off)
+  
+
+;----macros----
+restart_t0	macro
+    banksel PORTA
+    movlw   61
+    movwf   TMR0
+    bcf	    T0IF
+    endm
+    
+restart_t1	macro
+    movlw   0x85
+    movwf   TMR1H
+    movlw   0xEE
+    movwf   TMR1L
+    bcf	    TMR1IF	
+    endm
+    
+restart_t2	macro
+    movwf   195
+    movwf   PR2
+    bcf	    TMR2IF	
+    endm
+   
+PSECT udata_bank0
+    cont:	DS 2
+    segundos:	DS 2
+    
+PSECT udata_shr
+    W_TEMP:	    DS 1
+    STATUS_TEMP:    DS 1
+    
+PSECT resVect, class = code, abs, delta=2
+ORG 00h
+resetVec:
+    PAGESEL main
+    goto    main
+    
+PSECT	intVect, class=CODE, abs, delta=2
+ORG 04h
+push:
+    movwf   W_TEMP
+    swapf   STATUS, W
+    movwf   STATUS_TEMP
+    
+isr:
+    btfsc   T0IF
+    call    int_t0
+    btfsc   TMR1IF
+    call    int_t1
+    btfsc   TMR2IF
+    call    int_t2
+    
+    
+pop:
+    swapf   STATUS_TEMP, W
+    movwf   STATUS 
+    swapf   W_TEMP, F
+    swapf   W_TEMP, W
+    retfie
+    
+;----subrutinas de interrupción----
+   
+int_t0:
+    restart_t0
+    /*
+    incf    cont
+    movf    cont, w
+    sublw   20
+    btfss   ZERO
+    goto    return_t0
+    clrf    cont
+    */
+    incf    PORTA
+      
+return_t0:
+    return
+    
+int_t1:
+    restart_t1
+    incf    segundos
+    return
+    
+int_t2:
+    restart_t2
+    incf    PORTC
+    return
+    
+;----config----
+PSECT code, delta=2, abs
+ORG 100h
+main:
+    call    config_io
+    call    clock_conf
+    call    tmr0_conf
+    call    tmr1_conf
+    call    tmr2_conf
+    call    config_int_enable
+    banksel PORTA
+    
+;----main loop----
+    
+loop:
+    goto    loop
+    
+;----subrutinas----  
+config_io:
+    banksel ANSEL
+    clrf    ANSEL
+    clrf    ANSELH
+    
+    banksel TRISA
+    clrf    TRISA	;salidas
+    clrf    TRISB	
+    clrf    TRISC	
+    
+    banksel PORTA
+    clrf    PORTA
+    clrf    PORTB
+    clrf    PORTC
+    return
+    
+clock_conf:
+    banksel OSCCON
+    ;1 MHz
+    bsf	    IRCF2
+    bcf	    IRCF1
+    bcf	    IRCF0
+    bsf	    SCS
+    return
+ 
+tmr0_conf:
+    banksel TRISA
+    bcf	    T0CS	;reloj interno
+    bcf	    PSA		;prescaler para tmr0
+    bsf	    PS2
+    bsf	    PS1
+    bsf	    PS0		;prescaler 1:256
+    restart_t0
+    return
+    
+tmr1_conf:
+    banksel PORTA
+    bcf	    TMR1GE	;always counting
+    ; prescaler 1:8
+    bsf	    T1CKPS1
+    bsf	    T1CKPS0
+    
+    bcf	    T1OSCEN	;reloj interno
+    bcf	    TMR1CS
+    bsf	    TMR1ON	;encender tmr1
+    
+    ; valores iniciales de conteo 0x85EE para 1s
+    movlw   0x85
+    movwf   TMR1H
+    movlw   0xEE
+    movwf   TMR1L
+    bcf	    TMR1IF	;limpiar bandera
+    return
+    
+tmr2_conf:
+    banksel PORTA
+    ;prescaler 1:16
+    bsf	    TOUTPS3
+    bsf	    TOUTPS2
+    bsf	    TOUTPS1
+    bsf	    TOUTPS0
+    
+    bsf	    TMR2ON	;encender t2
+    ; precaler 1:16
+    bsf	    T2CKPS1 
+    bsf	    T2CKPS0
+    
+    banksel TRISB
+    ;valores iniciales
+    movwf   195
+    movwf   PR2
+    clrf    TMR2
+    bcf	    TMR2IF	;limpiar bandera
+    return
+    
+config_int_enable:
+    banksel TRISA
+    bsf	    TMR1IE	; habilitar int t1
+    bsf	    TMR2IE	; habilitar int t2
+    banksel PORTA
+    bsf	    T0IE	; habilitar int t0
+    
+    ;limpiar banderas
+    bcf	    T0IF	
+    bcf	    TMR1IF	
+    bcf	    TMR2IF	
+    
+    bsf	    PEIE	; int perifericas
+    bsf	    GIE		; int globales
+    return
+    
+END
