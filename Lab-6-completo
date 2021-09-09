@@ -1,0 +1,303 @@
+; Archivo	lab6.s
+; Dispositivo	PIC16F887
+; Autor		Luis J. Archila
+; Compilador	pic-as v2.32
+; Creado el	30/08/2021
+    
+PROCESSOR   16F887
+#include <xc.inc>
+
+; CONFIG1
+  CONFIG  FOSC = INTRC_NOCLKOUT ; Oscillator Selection bits (INTOSCIO oscillator: I/O function on RA6/OSC2/CLKOUT pin, I/O function on RA7/OSC1/CLKIN)
+  CONFIG  WDTE = OFF             ; Watchdog Timer Enable bit (WDT disabled)
+  CONFIG  PWRTE = OFF           ; Power-up Timer Enable bit (PWRT disabled)
+  CONFIG  MCLRE = OFF           ; RE3/MCLR pin function select bit (RE3/MCLR pin function is digital input, MCLR internally tied to VDD)
+  CONFIG  CP = OFF              ; Code Protection bit (Program memory code protection is disabled)
+  CONFIG  CPD = OFF             ; Data Code Protection bit (Data memory code protection is disabled)
+  CONFIG  BOREN = OFF           ; Brown Out Reset Selection bits (BOR disabled)
+  CONFIG  IESO = OFF            ; Internal External Switchover bit (Internal/External Switchover mode is disabled)
+  CONFIG  FCMEN = OFF           ; Fail-Safe Clock Monitor Enabled bit (Fail-Safe Clock Monitor is disabled)
+  CONFIG  LVP = OFF              ; Low Voltage Programming Enable bit (RB3/PGM pin has PGM function, low voltage programming enabled)
+
+; CONFIG2
+  CONFIG  BOR4V = BOR40V        ; Brown-out Reset Selection bit (Brown-out Reset set to 4.0V)
+  CONFIG  WRT = OFF             ; Flash Program Memory Self Write Enable bits (Write protection off)
+  
+
+;----macros----
+restart_t0	macro
+    ;aprox 2ms
+    banksel PORTA
+    movlw   240
+    movwf   TMR0
+    bcf	    T0IF
+    endm
+    
+restart_t1	macro
+    ;valor inicial .49911 para 1s
+    movlw   0xC2
+    movwf   TMR1H
+    movlw   0xF7
+    movwf   TMR1L
+    bcf	    TMR1IF	
+    endm
+    
+restart_t2	macro
+    ;valor inicial de 245 para 500ms
+    movwf   245
+    movwf   PR2
+    bcf	    TMR2IF	
+    endm
+   
+PSECT udata_bank0
+    segundos:	DS	1
+    dec_seg:	DS	1
+    banderas:	DS	1
+    nibble:	DS	2
+    display_var:	DS  2
+    
+PSECT udata_shr
+    W_TEMP:	    DS 1
+    STATUS_TEMP:    DS 1
+    
+PSECT resVect, class = code, abs, delta=2
+ORG 00h
+resetVec:
+    PAGESEL main
+    goto    main
+    
+PSECT	intVect, class=CODE, abs, delta=2
+ORG 04h
+push:
+    movwf   W_TEMP
+    swapf   STATUS, W
+    movwf   STATUS_TEMP
+    
+isr:
+    ;mostrar segundos en displays
+    btfsc   T0IF
+    call    int_t0
+    ;incrementar segundos
+    btfsc   TMR1IF
+    call    int_t1
+    ;blinking LED
+    btfsc   TMR2IF
+    call    int_t2_on
+     
+pop:
+    swapf   STATUS_TEMP, W
+    movwf   STATUS 
+    swapf   W_TEMP, F
+    swapf   W_TEMP, W
+    retfie
+    
+;----subrutinas de interrupción----
+   
+int_t0:
+    restart_t0
+    clrf    PORTD
+    btfsc   banderas, 0
+    goto    display_1
+    ;goto    display_0
+display_0:
+    movf    display_var+0, W
+    movwf   PORTC
+    bsf	    PORTD, 0
+    goto    siguiente_display
+display_1:
+    movf    display_var+1, W
+    movwf   PORTC
+    bsf	    PORTD, 1
+siguiente_display:
+    movlw   1
+    xorwf   banderas, F
+    return
+      
+return_t0:
+    return
+    
+int_t1:
+    restart_t1
+    incf    segundos
+    movf    segundos, w
+    sublw   10
+    btfss   ZERO
+    return
+    clrf    segundos
+    incf    dec_seg
+    movf    dec_seg, w
+    sublw   6
+    btfss   ZERO
+    return
+    clrf    dec_seg
+    return
+    
+int_t2_on:
+    bcf	    TMR2IF
+    incf    PORTE   ;ya que se incrementa cada 500ms, el pin 0 se enciende y
+		    ;apaga a la misma frecuencia
+    return
+    
+    
+;----config----
+PSECT code, delta=2, abs
+ORG 100h
+ 
+tabla:
+    clrf	PCLATH
+    bsf	PCLATH, 0   ; 0100h
+    andlw   0x0f
+    addwf   PCL	; inst 103, PC 104 + 5
+    retlw   00111111B       ;0
+    retlw   00000110B	;1
+    retlw   01011011B	;2
+    retlw   01001111B	;3
+    retlw   01100110B	;4
+    retlw   01101101B	;5
+    retlw   01111101B	;6
+    retlw   00000111B	;7
+    retlw   01111111B	;8
+    retlw   01101111B	;9
+    retlw   01110111B	;A
+    retlw   01111100B	;b
+    retlw   00111001B	;C
+    retlw   01011110B	;d
+    retlw   01111001B	;E
+    retlw   01110001B	;F
+
+    
+main:
+    call    config_io
+    call    clock_conf
+    call    tmr0_conf
+    call    tmr1_conf
+    call    tmr2_conf
+    call    config_int_enable
+    banksel PORTA
+    
+;----main loop----
+    
+loop:
+    call    separar_nibbles
+    call    preparar_displays
+    goto    loop
+    
+;----subrutinas----  
+config_io:
+    banksel ANSEL
+    clrf    ANSEL
+    clrf    ANSELH
+    
+    banksel TRISA
+    clrf    TRISA	;salidas
+    clrf    TRISB	
+    clrf    TRISC	
+    clrf    TRISD
+    clrf    TRISE
+    
+    banksel PORTA
+    clrf    PORTA
+    clrf    PORTB
+    clrf    PORTC
+    clrf    PORTD
+    clrf    PORTE
+    return
+    
+clock_conf:
+    banksel OSCCON
+    ;500 kHz
+    bcf	    IRCF2
+    bsf	    IRCF1
+    bsf	    IRCF0
+    bsf	    SCS
+    return
+ 
+tmr0_conf:
+    banksel TRISA
+    bcf	    T0CS	;reloj interno
+    bcf	    PSA		;prescaler para tmr0
+    bsf	    PS2
+    bsf	    PS1
+    bsf	    PS0		;prescaler 1:256
+    banksel PORTA
+    restart_t0
+    bsf	    GIE
+    bsf	    T0IE
+    bcf	    T0IF
+    return
+    
+tmr1_conf:
+    banksel PORTA
+    bcf	    TMR1GE	;always counting
+    ; prescaler 1:8
+    bsf	    T1CKPS1
+    bsf	    T1CKPS0
+    
+    bcf	    T1OSCEN	;reloj interno
+    bcf	    TMR1CS
+    bsf	    TMR1ON	;encender tmr1
+    
+    ; valores iniciales de conteo 0x85EE para 1s
+    movlw   0xC2
+    movwf   TMR1H
+    movlw   0xF7
+    movwf   TMR1L
+    bcf	    TMR1IF	;limpiar bandera
+    return
+    
+tmr2_conf:
+    banksel PORTA
+    ;postscaler 1:16
+    bsf	    TOUTPS3
+    bsf	    TOUTPS2
+    bsf	    TOUTPS1
+    bsf	    TOUTPS0
+    
+    bsf	    TMR2ON	;encender t2
+    ; prescaler 1:16
+    bsf	    T2CKPS1 
+    bsf	    T2CKPS0
+    
+    banksel TRISB
+    ;valores iniciales
+    movwf   245		;para 500ms
+    movwf   PR2
+    clrf    TMR2
+    bcf	    TMR2IF	;limpiar bandera
+    return
+    
+config_int_enable:
+    banksel TRISA
+    bsf	    TMR1IE	; habilitar int t1
+    bsf	    TMR2IE	; habilitar int t2
+    banksel PORTA
+    bsf	    T0IE	; habilitar int t0
+    
+    ;limpiar banderas
+    bcf	    T0IF	
+    bcf	    TMR1IF	
+    bcf	    TMR2IF	
+    
+    bsf	    PEIE	; int perifericas
+    bsf	    GIE		; int globales
+    return
+    
+separar_nibbles:
+    movf    segundos, W
+    andlw   0x0f
+    movwf   nibble
+    movf    dec_seg, W
+    andlw   0x0f
+    movwf   nibble+1
+    return
+
+preparar_displays:
+    movf    nibble, W
+    call    tabla
+    movwf   display_var
+    movf    nibble+1, W
+    call    tabla
+    movwf   display_var+1
+    return
+    
+END
