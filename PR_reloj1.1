@@ -1,0 +1,807 @@
+; Archivo	watch.s
+; Dispositivo	PIC16F887
+; Autor		Luis J. Archila
+; Compilador	pic-as v2.32
+; Creacion	10-09-21
+    
+PROCESSOR   16F887
+#include <xc.inc>
+    
+;------ bits de configuracion ------
+    
+; CONFIG1
+  CONFIG  FOSC = INTRC_NOCLKOUT ; Oscillator Selection bits (INTOSCIO oscillator: I/O function on RA6/OSC2/CLKOUT pin, I/O function on RA7/OSC1/CLKIN)
+  CONFIG  WDTE = OFF             ; Watchdog Timer Enable bit (WDT disabled)
+  CONFIG  PWRTE = OFF           ; Power-up Timer Enable bit (PWRT disabled)
+  CONFIG  MCLRE = OFF           ; RE3/MCLR pin function select bit (RE3/MCLR pin function is digital input, MCLR internally tied to VDD)
+  CONFIG  CP = OFF              ; Code Protection bit (Program memory code protection is disabled)
+  CONFIG  CPD = OFF             ; Data Code Protection bit (Data memory code protection is disabled)
+  CONFIG  BOREN = OFF           ; Brown Out Reset Selection bits (BOR disabled)
+  CONFIG  IESO = OFF            ; Internal External Switchover bit (Internal/External Switchover mode is disabled)
+  CONFIG  FCMEN = OFF           ; Fail-Safe Clock Monitor Enabled bit (Fail-Safe Clock Monitor is disabled)
+  CONFIG  LVP = OFF              ; Low Voltage Programming Enable bit (RB3/PGM pin has PGM function, low voltage programming enabled)
+
+; CONFIG2
+  CONFIG  BOR4V = BOR40V        ; Brown-out Reset Selection bit (Brown-out Reset set to 4.0V)
+  CONFIG  WRT = OFF             ; Flash Program Memory Self Write Enable bits (Write protection off)
+  
+
+;-------- macros --------
+  
+restart_t0	macro
+    ;aprox 2ms
+    banksel PORTA
+    movlw   255
+    movwf   TMR0
+    bcf	    T0IF
+    endm
+    
+restart_t1	macro
+    ;valor inicial .49911 para 1s
+    movlw   0xC2    ;C8
+    movwf   TMR1H
+    movlw   0xF7    ;00
+    movwf   TMR1L
+    bcf	    TMR1IF	
+    endm
+    
+restart_t2	macro
+    ;valor inicial de 245 para 500ms
+    movwf   245
+    movwf   PR2
+    bcf	    TMR2IF	
+    endm
+    
+reloj		macro
+    ;minutos
+    incf    min
+    movf    min, w
+    sublw   10
+    btfss   ZERO
+    return
+    clrf    min
+    ;decenas de min
+    incf    dec_min
+    movf    dec_min, w
+    sublw   6
+    btfss   ZERO
+    return
+    clrf    dec_min
+    ;horas
+    incf    hours
+    incf    hour_checker
+    movf    hours, w
+    sublw   10
+    btfss   ZERO
+    return
+    clrf    hours
+    ;decenas de horas
+    incf    dec_h
+    /*
+    movf    dec_h, w
+    sublw   6
+    btfss   ZERO
+    return
+    clrf    dec_h
+	*/
+    endm
+    
+fecha	    macro
+    ;dias
+    incf    dia_0
+    movf    dia_0, w
+    sublw   10
+    btfss   ZERO
+    return
+    clrf    dia_0
+    ;decenas de dias
+    incf    dia_1
+    movf    dia_1, w
+    sublw   30
+    btfss   ZERO
+    return
+    clrf    dia_1
+    ;meses
+    incf    mes_0
+    movf    mes_0, w
+    sublw   10
+    btfss   ZERO
+    return
+    clrf    mes_0
+    ;decenas de meses
+    incf    mes_1
+    movf    mes_1, w
+    sublw   2
+    btfss   ZERO
+    return
+    clrf    mes_1
+    endm
+   
+;-------- variables --------
+    
+PSECT udata_bank0
+    state:	    DS	1
+    
+    ;reloj
+    sec:	    DS	1
+    dec_sec:	    DS	1
+    min:	    DS	1
+    dec_min:	    DS	1
+    hours:	    DS	1
+    dec_h:	    DS	1
+    hour_checker:   DS	2
+    
+    ;fecha
+    dia_0:	    DS	1
+    dia_1:	    DS	1
+    mes_0:	    DS	1
+    mes_1:	    DS	1
+    
+    ;displays
+    banderas:	    DS	1
+    banderas1:	    DS	1
+    banderas2:	    DS	1
+    banderas3:	    DS	1
+    display_var:    DS  7
+    
+
+;------ variables temporales ------
+    
+PSECT udata_shr
+    W_TEMP:	    DS 1
+    STATUS_TEMP:    DS 1
+    
+    
+;----- vector reset ------
+    
+PSECT resVect, class = code, abs, delta=2
+ORG 00h
+resetVec:
+    PAGESEL main
+    goto    main
+    
+    
+;-------- interrupciones --------
+intVec:    
+    PSECT	intVect, class=CODE, abs, delta=2
+    ORG 04h
+    
+push:
+    movwf   W_TEMP
+    swapf   STATUS, W
+    movwf   STATUS_TEMP
+    
+isr:
+    ;mostrar displays
+    call    int_t0_1
+    call    int_t0_0
+    
+    btfsc   TMR1IF
+    call    int_t1
+    
+    ;blinking LEDs
+    btfsc   TMR2IF
+    call    int_t2_time
+    
+    
+;---- estados ----
+  
+    ;revisar estado
+    
+    
+    btfss   state, 0
+    goto    show_time_int
+    goto    conf_time_int
+    
+    
+show_time_int:
+    btfsc   RBIF    
+    call    set_state
+    bcf	    RBIF
+    goto    pop
+ 
+   
+conf_time_int:
+    btfsc   RBIF
+    call    change_time
+    btfsc   RBIF
+    call    clr_state
+    
+    bcf	    RBIF
+    goto    pop
+    
+    /*
+show_date_int:
+    bcf	    RBIF
+    btfss   PORTB, 0
+    ;clrf    state
+    goto    pop
+    
+    /*
+show_date_int:
+    btfss   PORTB, 0
+    bcf	    state, 0
+    bcf	    RBIF
+    goto    pop
+    */
+
+    
+    
+pop:
+    swapf   STATUS_TEMP, W
+    movwf   STATUS 
+    swapf   W_TEMP, F
+    swapf   W_TEMP, W
+    retfie
+    
+    
+    
+    
+;---------- subrutinas de interrupción ----------
+ 
+    
+;cambiar estado
+    
+set_state:
+    btfss   PORTB, 0
+    bsf	    state, 0
+    return
+    
+clr_state:
+    btfss   PORTB, 0
+    bcf	    state, 0
+    return
+    
+;---- displays ----
+    
+;displays 0 y 1
+int_t0_0:
+    restart_t0
+    clrf    PORTD
+    btfsc   banderas, 0
+    goto    display_1
+display_0:
+    movf    display_var, W
+    movwf   PORTC
+    bsf	    PORTD, 0
+    goto    siguiente_display
+display_1:
+    movf    display_var+1, W
+    movwf   PORTC
+    bsf	    PORTD, 1
+siguiente_display:
+    incf    banderas
+    btfsc   banderas, 1
+    clrf    banderas
+    return
+    
+;displays 2 y 3  
+int_t0_1:
+    restart_t0
+    clrf    PORTD
+    btfsc   banderas1, 0
+    goto    display_3
+display_2:
+    movf    display_var+2, W
+    movwf   PORTC
+    bsf	    PORTD, 2
+    goto    siguiente_display1
+display_3:
+    movf    display_var+3, W
+    movwf   PORTC
+    bsf	    PORTD, 3
+siguiente_display1:
+    incf    banderas1
+    btfsc   banderas1, 1
+    clrf    banderas1
+    return
+    
+ /*   
+;mostrar mes
+int_t0_mes:
+    restart_t0
+    clrf    PORTD
+    btfsc   banderas2, 0
+    goto    display_1
+display_0_m:
+    movf    display_var+4, W
+    movwf   PORTC
+    bsf	    PORTD, 0
+    goto    siguiente_display_m
+display_1_m:
+    movf    display_var+5, W
+    movwf   PORTC
+    bsf	    PORTD, 1
+siguiente_display_m:
+    incf    banderas2
+    btfsc   banderas2, 1
+    clrf    banderas2
+    return
+    
+;mostrar dias   
+int_t0_dia:
+    restart_t0
+    clrf    PORTD
+    btfsc   banderas3, 0
+    goto    display_3_d
+display_2_d:
+    movf    display_var+6, W
+    movwf   PORTC
+    bsf	    PORTD, 2
+    goto    siguiente_display_d
+display_3_d:
+    movf    display_var+7, W
+    movwf   PORTC
+    bsf	    PORTD, 3
+siguiente_display_d:
+    incf    banderas3
+    btfsc   banderas3, 1
+    clrf    banderas3
+    return
+   */
+       
+   
+int_t1:
+    bsf	    TMR1ON	;encender tmr1
+    restart_t1
+    ;segundos
+    incf    sec
+    /*
+    movf    sec, w
+    sublw   10
+    btfss   ZERO
+    return
+    clrf    sec
+    ;decenas de segundos
+    incf    dec_sec
+    movf    dec_sec, w
+    sublw   6
+    btfss   ZERO
+    return
+    clrf    dec_sec
+    */
+    return
+    
+    
+int_t2_time:
+    ;encender el led cada 500ms 
+    bcf	    TMR2IF
+    incf    PORTE   
+    ;apagar los pines que no se necesiten
+    btfsc   PORTE, 1
+    clrf    PORTE
+    return
+    
+    
+change_time:
+    btfss   PORTB, 3
+    call    inc_min
+    btfss   PORTB, 4
+    call    clear_min
+    btfss   PORTB, 1
+    call    inc_hours
+    btfss   PORTB, 2
+    call    clear_hours
+    return
+    
+inc_min:
+    ;minutos
+    incf    min
+    movf    min, w
+    sublw   10
+    btfss   ZERO
+    return
+    clrf    min
+    ;decenas de min
+    incf    dec_min
+    movf    dec_min, w
+    sublw   6
+    btfss   ZERO
+    return
+    clrf    dec_min
+    return
+    
+inc_hours:
+    ;minutos
+    incf    hours
+    incf    hour_checker
+    movf    hours, w
+    sublw   10
+    btfss   ZERO
+    return
+    clrf    hours
+    ;decenas de min
+    incf    dec_h
+    /*
+    movf    hour_checker, w
+    sublw   24
+    btfss   ZERO
+    return
+    ;clrf    hours
+    clrf    hour_checker
+    ;clrf    dec_h
+	*/
+    return
+    
+clear_min:
+    /*
+    clrf    min
+    clrf    dec_min
+    */
+    decf    min
+    return
+    
+clear_hours:
+    /*
+    clrf    hours
+    clrf    dec_h
+	*/
+    decf    hours
+    decf    hour_checker
+    return
+    
+    
+    
+;-------- configuracion --------
+    
+PSECT code, delta=2, abs
+ORG 100h
+ 
+tabla:
+    clrf	PCLATH
+    bsf	PCLATH, 0   ; 0100h
+    andlw   0x0f
+    addwf   PCL	; inst 103, PC 104 + 5
+    retlw   00111111B       ;0
+    retlw   00000110B	;1
+    retlw   01011011B	;2
+    retlw   01001111B	;3
+    retlw   01100110B	;4
+    retlw   01101101B	;5
+    retlw   01111101B	;6
+    retlw   00000111B	;7
+    retlw   01111111B	;8
+    retlw   01101111B	;9
+    retlw   01110111B	;A
+    retlw   01111100B	;b
+    retlw   00111001B	;C
+    retlw   01011110B	;d
+    retlw   01111001B	;E
+    retlw   01110001B	;F
+
+    
+main:
+    call    config_io
+    call    clock_conf
+    call    tmr0_conf
+    call    tmr1_conf
+    call    tmr2_conf
+    call    config_int_enable
+    call    config_ioc
+    
+    ;limpiar variables
+    clrf    sec
+    clrf    dec_sec
+    clrf    min
+    clrf    dec_min
+    clrf    hours
+    clrf    dec_h
+    clrf    hour_checker
+    
+    banksel PORTA
+    
+;------------------------- loop principal -------------------------
+    
+loop:
+    
+    call    incrementar_reloj
+    call    underflow_min
+    call    underflow_h
+    call    only_24h
+    call    hour_checker_underflow
+    
+    
+    
+    btfss   state, 0
+    goto    show_time
+    goto    conf_time
+       
+    /*
+    movf    state, w
+    sublw   0
+    btfss   ZERO
+    goto    conf_time
+  */
+    
+show_time:
+    call    preparar_displays
+    bsf	    TMR1ON
+    bcf	    PORTA, 0
+    bcf	    PORTA, 1
+    goto    loop
+    
+conf_time:
+    call    preparar_displays
+    bcf	    TMR1ON
+    bsf	    PORTA, 0
+    bcf	    PORTA, 1
+    goto    loop
+/*
+show_date:
+    call    preparar_displays_2
+    bcf	    PORTA, 0
+    bsf	    PORTA, 1
+    goto    loop
+ 
+conf_date:
+    
+    goto    loop
+    
+    /*
+    btfss   PORTB, 4
+    call    stop_time
+    btfss   PORTB, 3
+    call    resume_time
+    btfss   PORTB, 1
+    call    inc_min
+    
+    goto    loop
+    */
+    
+;-------- subrutinas --------
+  
+    
+config_ioc:
+    banksel TRISA
+    bsf	    IOCB, 0
+    bsf	    IOCB, 1
+    bsf	    IOCB, 2
+    bsf	    IOCB, 3
+    bsf	    IOCB, 4
+    
+    banksel PORTA
+    movf    PORTB, W	;al leer termina el mismatch
+    bcf	    RBIF   
+    return
+    
+    
+config_io:
+    ;usar pines digitales
+    banksel ANSEL
+    clrf    ANSEL
+    clrf    ANSELH
+    
+    banksel TRISA
+    ;pines de entrada
+    bsf	    TRISB, 0
+    bsf	    TRISB, 1
+    bsf	    TRISB, 2
+    bsf	    TRISB, 3
+    bsf	    TRISB, 4
+    ;puertos de salida	
+    clrf    TRISA
+    clrf    TRISC	
+    clrf    TRISD
+    clrf    TRISE
+    
+    ;habilitar pull-ups
+    bcf	    OPTION_REG, 7
+    bsf	    WPUB, 0
+    bsf	    WPUB, 1
+    bsf	    WPUB, 2
+    bsf	    WPUB, 3
+    bsf	    WPUB, 4
+    
+    banksel PORTA
+    clrf    PORTA
+    clrf    PORTC
+    clrf    PORTD
+    clrf    PORTE
+    return
+    
+    
+clock_conf:
+    banksel OSCCON
+    ;500 kHz
+    bcf	    IRCF2
+    bsf	    IRCF1
+    bsf	    IRCF0
+    bsf	    SCS
+    return
+ 
+    
+tmr0_conf:
+    banksel TRISA
+    bcf	    T0CS	;reloj interno
+    bcf	    PSA		;prescaler para tmr0
+    bsf	    PS2
+    bsf	    PS1
+    bsf	    PS0		;prescaler 1:256
+    banksel PORTA
+    restart_t0
+    bsf	    GIE
+    bsf	    T0IE
+    bcf	    T0IF
+    return
+    
+    
+tmr1_conf:
+    banksel PORTA
+    bcf	    TMR1GE	;always counting
+    ; prescaler 1:8
+    bsf	    T1CKPS1
+    bsf	    T1CKPS0
+    
+    bcf	    T1OSCEN	;reloj interno
+    bcf	    TMR1CS
+    ;bsf	    TMR1ON	;encender tmr1
+    
+    ; valores iniciales de conteo 0x85EE para 1s
+    /*
+    movlw   0xC2
+    movwf   TMR1H
+    movlw   0xF7
+    movwf   TMR1L
+    bcf	    TMR1IF	;limpiar bandera
+    */
+    restart_t1
+    return
+    
+    
+tmr2_conf:
+    banksel PORTA
+    ;postscaler 1:16
+    bsf	    TOUTPS3
+    bsf	    TOUTPS2
+    bsf	    TOUTPS1
+    bsf	    TOUTPS0
+    
+    bsf	    TMR2ON	;endender t2
+    ; prescaler 1:16
+    bsf	    T2CKPS1 
+    bsf	    T2CKPS0
+    
+    banksel TRISB
+    ;valores iniciales
+    movwf   245		;para 500ms
+    movwf   PR2
+    clrf    TMR2
+    bcf	    TMR2IF	;limpiar bandera
+    return
+    
+    
+config_int_enable:
+    banksel TRISA
+    bsf	    TMR1IE	; habilitar int t1
+    bsf	    TMR2IE	; habilitar int t2
+    banksel PORTA
+    bsf	    T0IE	; habilitar int t0
+    
+    ;limpiar banderas
+    bcf	    T0IF	
+    bcf	    TMR1IF	
+    bcf	    TMR2IF	
+    
+    bsf	    PEIE	; int perifericas
+    bsf	    GIE		; int globales
+    return
+
+  
+incrementar_reloj:
+    movf    sec, w
+    sublw   10
+    btfss   ZERO
+    return
+    clrf    sec
+    ;decenas de segundos
+    incf    dec_sec
+    movf    dec_sec, w
+    sublw   6
+    btfss   ZERO
+    return
+    clrf    dec_sec
+    reloj
+    return
+    
+    
+only_24h:
+    movf    hour_checker, w
+    sublw   24
+    btfss   ZERO
+    return
+    clrf    dec_h
+    clrf    hours
+    return
+    
+underflow_min:
+    movf    min, w
+    sublw   -1
+    btfss   ZERO
+    return
+    movlw   9
+    movwf   min
+    movlw   6
+    movwf   dec_min
+    
+    decf    dec_min
+    movf    dec_min, w
+    sublw   -1
+    btfss   ZERO
+    return
+    clrf    dec_min
+    return
+    
+underflow_h:
+    movf    hours, w
+    sublw   -1
+    btfss   ZERO
+    return
+    movlw   3
+    movwf   hours
+    movlw   3
+    movwf   dec_h
+    
+    decf    dec_h
+    movf    dec_h, w
+    sublw   -1
+    btfss   ZERO
+    return
+    clrf    dec_h
+    return
+    
+hour_checker_underflow:
+    movf    hour_checker, w
+    sublw   -1
+    btfss   ZERO
+    return
+    movlw   24
+    movwf   hour_checker
+    return
+    
+    
+    
+preparar_displays:
+    ;minutos
+    movf    min, W
+    call    tabla
+    movwf   display_var
+    
+    movf    dec_min, W
+    call    tabla
+    movwf   display_var+1
+    
+    ;horas
+    movf    hours, W
+    call    tabla
+    movwf   display_var+2
+    
+    movf    dec_h, W
+    call    tabla
+    movwf   display_var+3
+   
+    return
+  
+    
+    
+preparar_displays_2:  
+    ;mes
+    movf    mes_0, W
+    call    tabla
+    movwf   display_var
+    
+    movf    mes_1, W
+    call    tabla
+    movwf   display_var+1
+    
+    ;dia
+    movf    dia_0
+    call    tabla
+    movf    display_var+2
+    
+    movf    dia_1
+    call    tabla
+    movf    display_var+3
+    
+    return
+    
+END
