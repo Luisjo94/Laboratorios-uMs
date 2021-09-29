@@ -1,0 +1,200 @@
+/*
+ * File: lab7.c
+ * Luis J. Archila
+ * 27/09/2021 
+ */
+
+// PIC16F887 Configuration Bit Settings
+
+// 'C' source line config statements
+
+// CONFIG1
+#pragma config FOSC = INTRC_NOCLKOUT// Oscillator Selection bits (INTOSCIO oscillator: I/O function on RA6/OSC2/CLKOUT pin, I/O function on RA7/OSC1/CLKIN)
+#pragma config WDTE = OFF       // Watchdog Timer Enable bit (WDT disabled and can be enabled by SWDTEN bit of the WDTCON register)
+#pragma config PWRTE = OFF      // Power-up Timer Enable bit (PWRT disabled)
+#pragma config MCLRE = OFF      // RE3/MCLR pin function select bit (RE3/MCLR pin function is digital input, MCLR internally tied to VDD)
+#pragma config CP = OFF         // Code Protection bit (Program memory code protection is disabled)
+#pragma config CPD = OFF        // Data Code Protection bit (Data memory code protection is disabled)
+#pragma config BOREN = OFF      // Brown Out Reset Selection bits (BOR disabled)
+#pragma config IESO = OFF       // Internal External Switchover bit (Internal/External Switchover mode is disabled)
+#pragma config FCMEN = OFF      // Fail-Safe Clock Monitor Enabled bit (Fail-Safe Clock Monitor is disabled)
+#pragma config LVP = OFF        // Low Voltage Programming Enable bit (RB3 pin has digital I/O, HV on MCLR must be used for programming)
+
+// CONFIG2
+#pragma config BOR4V = BOR40V   // Brown-out Reset Selection bit (Brown-out Reset set to 4.0V)
+#pragma config WRT = OFF        // Flash Program Memory Self Write Enable bits (Write protection off)
+
+// #pragma config statements should precede project file includes.
+// Use project enums instead of #define for ON and OFF.
+
+#include <xc.h>
+#include <stdint.h>
+
+
+//**** Constantes ****
+        
+#define _tmr0_value_cont 207
+#define _tmr0_value_dis  255
+
+
+//**** Variables ****
+
+int cont_u, cont_d, cont_c, cambio;
+
+display[10]= {0x3f,0x06,0x5b,0x4f,0x66,0x6d,0x7d,0x07,0x7f,0x67};
+
+//**** Prototipos ****
+
+void    setup(void);
+
+
+//**** Interrupción ****
+
+void __interrupt() isr (void)
+{
+    if(INTCONbits.T0IF)
+    {
+        /*
+        PORTC ++;
+        T0IF = 0;
+         * */
+        TMR0 = _tmr0_value_dis;
+        
+        
+        switch (cambio)
+        {
+            case 1:
+                PORTEbits.RE0 = 0;
+                PORTEbits.RE1 = 0;
+                PORTEbits.RE2 = 1;
+                INTCONbits.T0IF = 0;
+                cambio ++;
+                
+                PORTD = display[cont_u];
+                break;
+                
+            case 2:
+                PORTEbits.RE0 = 0;
+                PORTEbits.RE1 = 1;
+                PORTEbits.RE2 = 0;
+                INTCONbits.T0IF = 0;
+                cambio ++;
+                
+                PORTD = display[cont_d];
+                break;
+                
+            case 3:
+                PORTEbits.RE0 = 1;
+                PORTEbits.RE1 = 0;
+                PORTEbits.RE2 = 0;
+                INTCONbits.T0IF = 0;
+                cambio ++;
+                
+                PORTD = display[cont_c];
+                break;
+                
+            default:
+                cambio = 1;
+        }
+        
+    }
+}
+
+//**** Main ****
+
+void main (void)
+{
+    setup();
+    
+    //main_loop
+    while (1)
+    {
+        //incrementar contador
+        if(PORTAbits.RA0)
+        {
+            while(RA0); 
+            cont_u ++;
+            PORTB ++;
+            
+            if(cont_u >= 10)
+            {
+                cont_u = 0;
+                cont_d ++;
+            }
+            if(cont_d >= 10)
+            {
+                cont_d = 0;
+                cont_c ++;
+            }
+            if(cont_c >= 10)
+            {
+                cont_c = 0;
+            }
+        }
+        
+        //decrementar contador
+        if(PORTAbits.RA1)
+        {
+            while(RA1);
+            cont_u --;
+            PORTB --;
+            
+            if(cont_u <= -1)
+            {
+                cont_u = 9;
+                cont_d --;
+            }
+            if(cont_d <= -1)
+            {
+                cont_d = 9;
+                cont_c --;
+            }
+            if(cont_c <= -1)
+            {
+                cont_c = 9;
+            }
+        }
+    }
+}
+
+
+//**** Funciones ****
+
+void setup(void)
+{
+    // port_conf
+    ANSEL = 0;
+    ANSELH = 0;
+    
+    TRISA = 0b0011;
+    TRISB = 0;
+    TRISC = 0;
+    TRISD = 0;
+    TRISE = 0;
+    
+    PORTB = 0;
+    PORTC = 0;
+    PORTD = 0;
+    PORTE = 0;
+    
+    //osc_conf
+    OSCCONbits.IRCF = 0b0011; //500 kHz
+    OSCCONbits.SCS = 1; 
+    
+    //tmr0_conf
+    OPTION_REGbits.T0CS = 0;
+    OPTION_REGbits.T0SE = 0;
+    OPTION_REGbits.PSA = 0;
+    OPTION_REGbits.PS2 = 1;
+    OPTION_REGbits.PS1 = 1;
+    OPTION_REGbits.PS0 = 1;
+    TMR0 = _tmr0_value_dis;
+    
+    INTCONbits.T0IF = 0;
+    INTCONbits.T0IE = 1;
+    INTCONbits.GIE = 1;
+    
+    return;
+}
+
+
